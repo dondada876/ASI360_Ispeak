@@ -1,0 +1,101 @@
+{
+  "name": "03 - Compliance Deadline Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule - Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.*, v.business_name, v.primary_language, v.phone_number FROM tasks t JOIN vendor_profiles v ON t.vendor_id = v.id WHERE t.status NOT IN ('completed', 'cancelled') AND t.due_date IS NOT NULL AND t.due_date >= NOW() AND t.due_date <= NOW() + INTERVAL '7 days' ORDER BY t.due_date ASC",
+        "additionalFields": {}
+      },
+      "id": "get-upcoming-tasks",
+      "name": "Get Upcoming Deadlines",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-connection",
+          "name": "Supabase PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const tasks = $input.all();\nconst reminders = [];\n\nfor (const item of tasks) {\n  const task = item.json;\n  const dueDate = new Date(task.due_date);\n  const now = new Date();\n  const hoursUntilDue = (dueDate - now) / (1000 * 60 * 60);\n  \n  let shouldRemind = false;\n  let reminderType = '';\n  \n  if (hoursUntilDue <= 4 && hoursUntilDue > 0) {\n    shouldRemind = true;\n    reminderType = '4h_before';\n  } else if (hoursUntilDue <= 24 && hoursUntilDue > 4) {\n    shouldRemind = true;\n    reminderType = '1d_before';\n  } else if (hoursUntilDue <= 72 && hoursUntilDue > 24) {\n    shouldRemind = true;\n    reminderType = '3d_before';\n  } else if (hoursUntilDue <= 168 && hoursUntilDue > 72) {\n    shouldRemind = true;\n    reminderType = '7d_before';\n  } else if (hoursUntilDue < 0) {\n    shouldRemind = true;\n    reminderType = 'overdue';\n  }\n  \n  if (shouldRemind) {\n    reminders.push({\n      json: {\n        ...task,\n        reminder_type: reminderType,\n        hours_until_due: Math.round(hoursUntilDue),\n        is_overdue: hoursUntilDue < 0\n      }\n    });\n  }\n}\n\nreturn reminders;"
+      },
+      "id": "calculate-reminders",
+      "name": "Calculate Which Reminders to Send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.N8N_WEBHOOK_URL}}/send-message",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"vendor_id\": \"{{$json.vendor_id}}\",\n  \"message\": \"⚠️ REMINDER: {{$json.title}}\\n\\nDue: {{$json.due_date}}\\n\\n{{$json.is_overdue ? 'THIS TASK IS NOW OVERDUE!' : 'Please complete this task on time.'}}\\n\\nType: {{$json.task_type}}\\nPriority: {{$json.priority}}\",\n  \"urgency\": \"{{$json.is_overdue ? 'critical' : 'high'}}\",\n  \"message_type\": \"compliance\"\n}",
+        "options": {}
+      },
+      "id": "send-reminder",
+      "name": "Send Reminder Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE tasks SET last_reminder_sent_at = NOW(), reminder_count = reminder_count + 1, status = CASE WHEN '{{$json.is_overdue}}' = 'true' THEN 'overdue' ELSE status END WHERE id = '{{$json.id}}'",
+        "additionalFields": {}
+      },
+      "id": "update-task-reminder",
+      "name": "Update Task Reminder Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1050, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-connection",
+          "name": "Supabase PostgreSQL"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule - Every 6 Hours": {
+      "main": [[{"node": "Get Upcoming Deadlines", "type": "main", "index": 0}]]
+    },
+    "Get Upcoming Deadlines": {
+      "main": [[{"node": "Calculate Which Reminders to Send", "type": "main", "index": 0}]]
+    },
+    "Calculate Which Reminders to Send": {
+      "main": [[{"node": "Send Reminder Message", "type": "main", "index": 0}]]
+    },
+    "Send Reminder Message": {
+      "main": [[{"node": "Update Task Reminder Status", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {"executionOrder": "v1"},
+  "id": "03-compliance-monitor",
+  "tags": [{"name": "automation", "id": "3"}, {"name": "compliance", "id": "4"}]
+}

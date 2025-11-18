@@ -1,0 +1,79 @@
+{
+  "name": "05 - Airtable Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "minutes", "minutesInterval": 15}]
+        }
+      },
+      "id": "schedule-sync",
+      "name": "Schedule - Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT v.*, (SELECT COUNT(*) FROM tasks WHERE vendor_id = v.id AND status NOT IN ('completed', 'cancelled')) as open_tasks, (SELECT COUNT(*) FROM tasks WHERE vendor_id = v.id AND status = 'overdue') as overdue_tasks FROM vendor_profiles v WHERE v.status = 'active'",
+        "additionalFields": {}
+      },
+      "id": "get-vendors",
+      "name": "Get Vendor Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {"postgres": {"id": "supabase-connection", "name": "Supabase PostgreSQL"}}
+    },
+    {
+      "parameters": {
+        "application": "{{$env.AIRTABLE_BASE_ID}}",
+        "table": "{{$env.AIRTABLE_VENDORS_TABLE}}",
+        "options": {}
+      },
+      "id": "sync-to-airtable-vendors",
+      "name": "Sync Vendors to Airtable",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "credentials": {"airtableApi": {"id": "airtable-credentials", "name": "Airtable"}}
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT t.*, v.business_name FROM tasks t JOIN vendor_profiles v ON t.vendor_id = v.id WHERE t.updated_at > NOW() - INTERVAL '1 hour' ORDER BY t.updated_at DESC",
+        "additionalFields": {}
+      },
+      "id": "get-recent-tasks",
+      "name": "Get Recent Tasks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "credentials": {"postgres": {"id": "supabase-connection", "name": "Supabase PostgreSQL"}}
+    },
+    {
+      "parameters": {
+        "application": "{{$env.AIRTABLE_BASE_ID}}",
+        "table": "{{$env.AIRTABLE_TASKS_TABLE}}",
+        "options": {}
+      },
+      "id": "sync-to-airtable-tasks",
+      "name": "Sync Tasks to Airtable",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 1,
+      "position": [1050, 300],
+      "credentials": {"airtableApi": {"id": "airtable-credentials", "name": "Airtable"}}
+    }
+  ],
+  "connections": {
+    "Schedule - Every 15 Minutes": {"main": [[{"node": "Get Vendor Data", "type": "main", "index": 0}]]},
+    "Get Vendor Data": {"main": [[{"node": "Sync Vendors to Airtable", "type": "main", "index": 0}]]},
+    "Sync Vendors to Airtable": {"main": [[{"node": "Get Recent Tasks", "type": "main", "index": 0}]]},
+    "Get Recent Tasks": {"main": [[{"node": "Sync Tasks to Airtable", "type": "main", "index": 0}]]}
+  },
+  "active": true,
+  "settings": {"executionOrder": "v1"},
+  "id": "05-airtable-sync",
+  "tags": [{"name": "automation", "id": "3"}, {"name": "sync", "id": "6"}]
+}

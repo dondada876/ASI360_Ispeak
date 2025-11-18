@@ -1,0 +1,568 @@
+{
+  "name": "01 - Inbound Message Processing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "twilio/inbound",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-twilio-inbound",
+      "name": "Webhook - Twilio Inbound",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "twilio-inbound-messages"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"MessageStatus\"]}}",
+              "operation": "notEqual",
+              "value2": "received"
+            }
+          ]
+        }
+      },
+      "id": "filter-received-only",
+      "name": "Filter - Received Messages Only",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, business_name, primary_language, preferred_channel FROM vendor_profiles WHERE phone_number = '{{$json[\"From\"]}}'",
+        "additionalFields": {}
+      },
+      "id": "lookup-vendor",
+      "name": "Lookup Vendor by Phone",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-connection",
+          "name": "Supabase PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json[\"id\"] != null}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-vendor-exists",
+      "name": "Check - Vendor Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api-free.deepl.com/v2/translate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "DeepL-Auth-Key {{$credentials.deepl.apiKey}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "text",
+              "value": "={{$json[\"Body\"]}}"
+            },
+            {
+              "name": "target_lang",
+              "value": "EN"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "translate-to-english",
+      "name": "Translate to English (DeepL)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract translation results and prepare data\nconst webhookData = $input.first().json;\nconst translationData = $input.last().json;\n\n// Get translated text and detected language\nconst translatedText = translationData.translations[0].text;\nconst detectedLanguage = translationData.translations[0].detected_source_language.toLowerCase();\nconst originalText = webhookData.Body;\n\n// Determine if message contains media\nconst numMedia = parseInt(webhookData.NumMedia || '0');\nconst hasMedia = numMedia > 0;\n\n// Extract media URLs if present\nconst mediaUrls = [];\nif (hasMedia) {\n  for (let i = 0; i < numMedia; i++) {\n    mediaUrls.push({\n      url: webhookData[`MediaUrl${i}`],\n      contentType: webhookData[`MediaContentType${i}`]\n    });\n  }\n}\n\n// Determine message type from content\nlet messageType = 'general';\nlet urgencyLevel = 'normal';\n\nconst lowerText = translatedText.toLowerCase();\nif (lowerText.includes('insurance') || lowerText.includes('certificate')) {\n  messageType = 'compliance';\n  urgencyLevel = 'high';\n} else if (lowerText.includes('payment') || lowerText.includes('invoice') || lowerText.includes('$')) {\n  messageType = 'payment';\n} else if (lowerText.includes('urgent') || lowerText.includes('emergency') || lowerText.includes('asap')) {\n  urgencyLevel = 'critical';\n} else if (lowerText.includes('menu') || lowerText.includes('food')) {\n  messageType = 'menu';\n}\n\nreturn {\n  json: {\n    // Vendor info (from lookup)\n    vendor_id: $('Lookup Vendor by Phone').first().json.id,\n    vendor_name: $('Lookup Vendor by Phone').first().json.business_name,\n    vendor_language: $('Lookup Vendor by Phone').first().json.primary_language,\n    \n    // Message content\n    original_text: originalText,\n    original_language: detectedLanguage,\n    translated_text: translatedText,\n    translated_language: 'en',\n    \n    // Message metadata\n    direction: 'inbound',\n    channel: webhookData.From.includes('whatsapp') ? 'whatsapp' : 'sms',\n    message_type: messageType,\n    urgency_level: urgencyLevel,\n    \n    // Twilio identifiers\n    twilio_message_sid: webhookData.MessageSid,\n    from_number: webhookData.From,\n    to_number: webhookData.To,\n    \n    // Media\n    has_media: hasMedia,\n    media_count: numMedia,\n    media_urls: mediaUrls,\n    media_type: hasMedia ? (mediaUrls[0].contentType.includes('image') ? 'image' : \n                           mediaUrls[0].contentType.includes('audio') ? 'audio' : 'document') : null,\n    \n    // Full webhook data for audit trail\n    raw_webhook_data: webhookData,\n    \n    // Timestamp\n    sent_at: new Date().toISOString()\n  }\n};"
+      },
+      "id": "prepare-conversation-data",
+      "name": "Prepare Conversation Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{$credentials.anthropic.apiKey}}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-3-haiku-20240307\",\n  \"max_tokens\": 1024,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Analyze this vendor message and extract action items.\\n\\nMessage: {{$json.translated_text}}\\n\\nRespond in JSON format with:\\n- summary: Brief 1-2 sentence summary\\n- contains_action_item: true/false\\n- extracted_tasks: Array of tasks with title, description, task_type, priority, due_date (if mentioned)\\n- sentiment: positive/neutral/negative/urgent\\n\\nExample:\\n{\\n  \\\"summary\\\": \\\"Vendor requesting help with equipment repair\\\",\\n  \\\"contains_action_item\\\": true,\\n  \\\"extracted_tasks\\\": [{\\n    \\\"title\\\": \\\"Fix broken oven\\\",\\n    \\\"description\\\": \\\"Oven not heating properly\\\",\\n    \\\"task_type\\\": \\\"maintenance\\\",\\n    \\\"priority\\\": \\\"high\\\",\\n    \\\"due_date\\\": null\\n  }],\\n  \\\"sentiment\\\": \\\"neutral\\\"\\n}\"\n    }\n  ]\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": false,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "analyze-with-claude",
+      "name": "Analyze with Claude AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's response and merge with conversation data\nconst conversationData = $('Prepare Conversation Data').first().json;\nconst claudeResponse = $input.first().json;\n\n// Extract the analysis from Claude's response\nconst aiAnalysis = JSON.parse(claudeResponse.content[0].text);\n\nreturn {\n  json: {\n    ...conversationData,\n    // Add AI analysis results\n    ai_summary: aiAnalysis.summary,\n    contains_action_item: aiAnalysis.contains_action_item,\n    extracted_tasks: aiAnalysis.extracted_tasks,\n    sentiment: aiAnalysis.sentiment,\n    ai_confidence: 0.85\n  }\n};"
+      },
+      "id": "merge-ai-analysis",
+      "name": "Merge AI Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "conversations",
+        "columns": "vendor_id, direction, channel, original_text, original_language, translated_text, translated_language, media_type, message_type, urgency_level, contains_action_item, extracted_tasks, ai_summary, sentiment, ai_confidence, twilio_message_sid, raw_webhook_data, sent_at",
+        "values": "={{$json.vendor_id}}, {{$json.direction}}, {{$json.channel}}, {{$json.original_text}}, {{$json.original_language}}, {{$json.translated_text}}, {{$json.translated_language}}, {{$json.media_type}}, {{$json.message_type}}, {{$json.urgency_level}}, {{$json.contains_action_item}}, {{JSON.stringify($json.extracted_tasks)}}, {{$json.ai_summary}}, {{$json.sentiment}}, {{$json.ai_confidence}}, {{$json.twilio_message_sid}}, {{JSON.stringify($json.raw_webhook_data)}}, {{$json.sent_at}}",
+        "returnFields": "id, vendor_id, translated_text, contains_action_item, extracted_tasks"
+      },
+      "id": "store-in-database",
+      "name": "Store Conversation in Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1850, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-connection",
+          "name": "Supabase PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.contains_action_item}}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "check-has-tasks",
+      "name": "Check - Has Action Items",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2050, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create individual task records for each extracted task\nconst conversationId = $input.first().json.id;\nconst vendorId = $input.first().json.vendor_id;\nconst extractedTasks = JSON.parse($input.first().json.extracted_tasks || '[]');\n\nconst taskRecords = [];\n\nfor (const task of extractedTasks) {\n  taskRecords.push({\n    conversation_id: conversationId,\n    vendor_id: vendorId,\n    title: task.title,\n    description: task.description || '',\n    task_type: task.task_type || 'other',\n    priority: task.priority || 'medium',\n    due_date: task.due_date || null,\n    assigned_to: 'vendor',\n    is_compliance_requirement: task.task_type === 'insurance' || task.task_type === 'permit',\n    status: 'pending'\n  });\n}\n\nreturn taskRecords.map(task => ({ json: task }));"
+      },
+      "id": "prepare-task-records",
+      "name": "Prepare Task Records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2250, 200]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "tasks",
+        "columns": "conversation_id, vendor_id, title, description, task_type, priority, due_date, assigned_to, is_compliance_requirement, status",
+        "values": "={{$json.conversation_id}}, {{$json.vendor_id}}, {{$json.title}}, {{$json.description}}, {{$json.task_type}}, {{$json.priority}}, {{$json.due_date}}, {{$json.assigned_to}}, {{$json.is_compliance_requirement}}, {{$json.status}}"
+      },
+      "id": "create-tasks",
+      "name": "Create Tasks in Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [2450, 200],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-connection",
+          "name": "Supabase PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "schema": "public",
+        "table": "system_events",
+        "columns": "event_type, vendor_id, related_id, description, severity, triggered_by, event_data",
+        "values": "=task_created, {{$json.vendor_id}}, {{$json.id}}, Task created from conversation: {{$json.title}}, info, automation:n8n, {{JSON.stringify($json)}}"
+      },
+      "id": "log-task-creation",
+      "name": "Log Task Creation Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [2650, 200],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-connection",
+          "name": "Supabase PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$('Merge AI Analysis').first().json.urgency_level}}",
+              "operation": "equals",
+              "value2": "critical"
+            }
+          ]
+        }
+      },
+      "id": "check-critical-urgency",
+      "name": "Check - Critical Urgency",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [2050, 450]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.TELEGRAM_BOT_API_URL}}/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{$env.TELEGRAM_ADMIN_CHAT_ID}}"
+            },
+            {
+              "name": "text",
+              "value": "=🚨 CRITICAL MESSAGE from {{$('Merge AI Analysis').first().json.vendor_name}}\\n\\n📝 Original: {{$('Merge AI Analysis').first().json.original_text}}\\n\\n🇺🇸 Translation: {{$('Merge AI Analysis').first().json.translated_text}}\\n\\n⚡ Urgency: CRITICAL\\n✅ Action Items: {{$('Merge AI Analysis').first().json.contains_action_item ? 'Yes' : 'No'}}"
+            },
+            {
+              "name": "parse_mode",
+              "value": "HTML"
+            }
+          ]
+        }
+      },
+      "id": "notify-admin-critical",
+      "name": "Notify Admin - Critical Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [2250, 550]
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-to-webhook-success",
+      "name": "Respond to Webhook - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [2850, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=Vendor not found for phone number: {{$json[\"From\"]}}. Please register vendor first.",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-vendor-not-found",
+      "name": "Respond - Vendor Not Found",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1050, 450]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=Status update received: {{$json[\"MessageStatus\"]}}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-status-update",
+      "name": "Respond - Status Update",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [650, 450]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook - Twilio Inbound": {
+      "main": [
+        [
+          {
+            "node": "Filter - Received Messages Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter - Received Messages Only": {
+      "main": [
+        [
+          {
+            "node": "Lookup Vendor by Phone",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - Status Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lookup Vendor by Phone": {
+      "main": [
+        [
+          {
+            "node": "Check - Vendor Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check - Vendor Exists": {
+      "main": [
+        [
+          {
+            "node": "Translate to English (DeepL)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - Vendor Not Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Translate to English (DeepL)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Conversation Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Conversation Data": {
+      "main": [
+        [
+          {
+            "node": "Analyze with Claude AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze with Claude AI": {
+      "main": [
+        [
+          {
+            "node": "Merge AI Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge AI Analysis": {
+      "main": [
+        [
+          {
+            "node": "Store Conversation in Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Conversation in Database": {
+      "main": [
+        [
+          {
+            "node": "Check - Has Action Items",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check - Critical Urgency",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check - Has Action Items": {
+      "main": [
+        [
+          {
+            "node": "Prepare Task Records",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Task Records": {
+      "main": [
+        [
+          {
+            "node": "Create Tasks in Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Tasks in Database": {
+      "main": [
+        [
+          {
+            "node": "Log Task Creation Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Task Creation Event": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check - Critical Urgency": {
+      "main": [
+        [
+          {
+            "node": "Notify Admin - Critical Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Admin - Critical Message": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1.0.0",
+  "id": "01-inbound-message-processing",
+  "meta": {
+    "instanceId": "asi360-ispeak-production"
+  },
+  "tags": [
+    {
+      "name": "core",
+      "id": "1"
+    },
+    {
+      "name": "messaging",
+      "id": "2"
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "name": "04 - Audio Transcription Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{"field": "minutes", "minutesInterval": 5}]
+        }
+      },
+      "id": "schedule-check-audio",
+      "name": "Schedule - Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM media_files WHERE file_type = 'audio' AND transcription_status = 'pending' LIMIT 5",
+        "additionalFields": {}
+      },
+      "id": "get-pending-audio",
+      "name": "Get Pending Audio Files",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {"postgres": {"id": "supabase-connection", "name": "Supabase PostgreSQL"}}
+    },
+    {
+      "parameters": {
+        "url": "https://api.assemblyai.com/v2/transcript",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "authorization", "value": "={{$env.ASSEMBLYAI_API_KEY}}"},
+            {"name": "content-type", "value": "application/json"}
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"audio_url\": \"{{$json.storage_url}}\", \"language_detection\": true}",
+        "options": {}
+      },
+      "id": "submit-to-assemblyai",
+      "name": "Submit to AssemblyAI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE media_files SET transcription_status = 'processing' WHERE id = '{{$json.id}}'",
+        "additionalFields": {}
+      },
+      "id": "mark-processing",
+      "name": "Mark as Processing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "credentials": {"postgres": {"id": "supabase-connection", "name": "Supabase PostgreSQL"}}
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "wait-for-transcription",
+      "name": "Wait 5 Seconds",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.assemblyai.com/v2/transcript/{{$('Submit to AssemblyAI').first().json.id}}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{"name": "authorization", "value": "={{$env.ASSEMBLYAI_API_KEY}}"}]
+        },
+        "options": {}
+      },
+      "id": "check-transcription-status",
+      "name": "Check Transcription Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [1250, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE media_files SET transcription_status = 'completed', transcription_text = '{{$json.text}}', transcription_language = '{{$json.language_code}}', processed_at = NOW() WHERE id = '{{$('Get Pending Audio Files').first().json.id}}'",
+        "additionalFields": {}
+      },
+      "id": "save-transcription",
+      "name": "Save Transcription",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1450, 300],
+      "credentials": {"postgres": {"id": "supabase-connection", "name": "Supabase PostgreSQL"}}
+    }
+  ],
+  "connections": {
+    "Schedule - Every 5 Minutes": {"main": [[{"node": "Get Pending Audio Files", "type": "main", "index": 0}]]},
+    "Get Pending Audio Files": {"main": [[{"node": "Submit to AssemblyAI", "type": "main", "index": 0}]]},
+    "Submit to AssemblyAI": {"main": [[{"node": "Mark as Processing", "type": "main", "index": 0}]]},
+    "Mark as Processing": {"main": [[{"node": "Wait 5 Seconds", "type": "main", "index": 0}]]},
+    "Wait 5 Seconds": {"main": [[{"node": "Check Transcription Status", "type": "main", "index": 0}]]},
+    "Check Transcription Status": {"main": [[{"node": "Save Transcription", "type": "main", "index": 0}]]}
+  },
+  "active": true,
+  "settings": {"executionOrder": "v1"},
+  "id": "04-audio-transcription",
+  "tags": [{"name": "automation", "id": "3"}, {"name": "media", "id": "5"}]
+}
