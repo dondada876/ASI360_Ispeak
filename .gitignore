@@ -1,0 +1,276 @@
+# ============================================
+# ASI360 iSpeak - Git Ignore Configuration
+# ============================================
+
+# ============================================
+# ENVIRONMENT & SECRETS
+# ============================================
+.env
+.env.local
+.env.*.local
+.env.production
+.env.staging
+.env.development
+
+# Backup of environment files
+*.env.backup
+.env.backup.*
+
+# ============================================
+# N8N
+# ============================================
+n8n/data/
+n8n/logs/
+.n8n/
+
+# N8N credentials (never commit actual credentials)
+n8n/credentials/*
+!n8n/credentials/.gitkeep
+!n8n/credentials/credentials_template.json
+
+# N8N execution data
+n8n/executions/
+n8n/.cache/
+
+# ============================================
+# DATABASE
+# ============================================
+# Database backups (keep in secure location)
+*.sql
+*.dump
+*.backup
+/backups/
+database/backups/
+
+# Database connection files
+database.ini
+pgpass
+
+# ============================================
+# LOGS
+# ============================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# OS logs
+error.log
+combined.log
+access.log
+
+# ============================================
+# NODE / NPM
+# ============================================
+node_modules/
+npm-debug.log
+yarn.lock
+package-lock.json
+.npm
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.pnp.*
+
+# ============================================
+# DOCKER
+# ============================================
+# Docker volumes
+volumes/
+docker-volumes/
+
+# Docker environment
+.dockerignore
+
+# Docker data persistence
+postgres-data/
+redis-data/
+
+# ============================================
+# SSL CERTIFICATES
+# ============================================
+nginx/ssl/*.key
+nginx/ssl/*.crt
+nginx/ssl/*.pem
+nginx/ssl/*.p12
+*.key
+*.crt
+*.pem
+*.p12
+ssl/
+
+# Let's Encrypt certificates
+certbot/
+
+# ============================================
+# OPERATING SYSTEM FILES
+# ============================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+
+# ============================================
+# IDE & EDITOR FILES
+# ============================================
+# VSCode
+.vscode/
+*.code-workspace
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+.netrwhist
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# ============================================
+# TEMPORARY FILES
+# ============================================
+tmp/
+temp/
+*.tmp
+*.temp
+.cache/
+cache/
+
+# Build artifacts
+dist/
+build/
+out/
+.next/
+
+# ============================================
+# MEDIA FILES (if not using external storage)
+# ============================================
+uploads/
+media/
+audio/
+images/
+documents/
+
+# But keep .gitkeep files to preserve directory structure
+!.gitkeep
+
+# ============================================
+# TESTING
+# ============================================
+coverage/
+.nyc_output/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test results
+test-results/
+junit.xml
+
+# ============================================
+# BACKUPS
+# ============================================
+*.backup
+*.bak
+backup-*
+*-backup
+
+# ============================================
+# SCRIPTS (sensitive)
+# ============================================
+# Any scripts with credentials or sensitive data
+*_production.sh
+*_secrets.sh
+deploy_keys/
+
+# ============================================
+# DOCUMENTATION (generated)
+# ============================================
+docs/_build/
+docs/.doctrees/
+site/
+
+# ============================================
+# MISC
+# ============================================
+.env.schema
+.env.template
+
+# API documentation (if generated)
+api-docs/
+
+# Dependency directories
+jspm_packages/
+bower_components/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# parcel-bundler cache
+.parcel-cache
+
+# ============================================
+# PROJECT SPECIFIC
+# ============================================
+# Vendor-specific data files (if any)
+vendor-data/
+vendor-exports/
+
+# Analytics exports
+analytics-exports/
+
+# Compliance documents (store securely elsewhere)
+compliance-docs/
+insurance-certificates/
+permits/
+
+# Financial data
+invoices/
+payment-records/
+
+# ============================================
+# KEEP THESE (explicitly)
+# ============================================
+!.gitkeep
+!README.md
+!.env.example
+!database/schema.sql
+!n8n/workflows/*.json
+!scripts/*.sh
